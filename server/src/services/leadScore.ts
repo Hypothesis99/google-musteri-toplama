@@ -2,6 +2,11 @@ import type { LeadCandidate } from '../types.js';
 
 type ScoreInput = Omit<LeadCandidate, 'leadScore' | 'scoreReasons'>;
 
+const OPPORTUNITY_CATEGORY_TERMS = [
+  'restoran', 'restaurant', 'diş', 'dental', 'klinik', 'güzellik', 'kuaför',
+  'emlak', 'otel', 'hotel', 'mobilya', 'otomotiv', 'spor salonu', 'fitness'
+];
+
 export function scoreLead(lead: ScoreInput): Pick<LeadCandidate, 'leadScore' | 'scoreReasons'> {
   let score = 35;
   const reasons: string[] = [];
@@ -17,6 +22,12 @@ export function scoreLead(lead: ScoreInput): Pick<LeadCandidate, 'leadScore' | '
   if (lead.website && lead.mobileFriendly === false) { score += 8; reasons.push('Web sitesi mobil uyumluluk sinyali vermiyor.'); }
   if (lead.website && lead.hasContactForm === false) { score += 4; reasons.push('Web sitesinde iletişim formu bulunamadı.'); }
   if (lead.website && lead.enrichmentStatus === 'done' && !lead.instagram) { score += 4; reasons.push('Instagram bağlantısı bulunamadı.'); }
+
+  const category = (lead.category ?? '').toLocaleLowerCase('tr-TR');
+  if (category && OPPORTUNITY_CATEGORY_TERMS.some(term => category.includes(term))) {
+    score += 3;
+    reasons.push('Kategori dijital görünürlük ve müşteri kazanımı açısından güçlü bir fırsat alanı.');
+  }
 
   return { leadScore: Math.max(0, Math.min(100, score)), scoreReasons: reasons };
 }
