@@ -18,14 +18,28 @@ export interface LeadCandidate {
 }
 
 export interface SearchPayload {
-  query: string;
+  query?: string;
   location: string;
   minRating?: number;
   minReviews?: number;
+}
+
+export interface EnrichmentData {
+  email?: string;
+  whatsapp?: string;
+  instagram?: string;
+  facebook?: string;
+  linkedin?: string;
+  tiktok?: string;
+  contactPage?: string;
+  hasContactForm?: boolean;
+  hasSsl?: boolean;
+  technology?: string[];
 }
 
 export interface SavedLead extends LeadCandidate {
   id: string;
   status: LeadStatus;
   notes?: string;
+  enrichment?: EnrichmentData;
 }
