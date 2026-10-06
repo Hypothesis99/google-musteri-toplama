@@ -9,7 +9,9 @@ const TIMEOUT_MS = 8_000;
 
 function isPrivateIp(ip: string): boolean {
   if (net.isIP(ip) === 4) {
-    const [a, b] = ip.split('.').map(Number);
+    const parts = ip.split('.');
+    const a = Number(parts[0] ?? -1);
+    const b = Number(parts[1] ?? -1);
     return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
   }
   if (net.isIP(ip) === 6) {
@@ -86,10 +88,12 @@ function extractLinks(html: string, base: URL): string[] {
   const links: string[] = [];
   const regex = /href\s*=\s*["']([^"']+)["']/gi;
   for (const match of html.matchAll(regex)) {
+    const href = match[1];
+    if (!href) continue;
     try {
-      const url = new URL(match[1], base);
+      const url = new URL(href, base);
       if (['http:', 'https:'].includes(url.protocol)) links.push(url.toString());
-    } catch { /* ignore invalid href */ }
+    } catch { /* invalid href */ }
   }
   return unique(links);
 }
@@ -104,7 +108,7 @@ function firstByHost(links: string[], hosts: string[]): string | undefined {
 }
 
 function cleanEmail(value: string): string {
-  return value.replace(/^mailto:/i, '').split('?')[0].trim().toLowerCase();
+  return (value.replace(/^mailto:/i, '').split('?')[0] ?? '').trim().toLowerCase();
 }
 
 export async function enrichLead(lead: LeadCandidate): Promise<LeadCandidate> {
@@ -113,8 +117,8 @@ export async function enrichLead(lead: LeadCandidate): Promise<LeadCandidate> {
   try {
     const { html, finalUrl } = await fetchWebsite(lead.website);
     const links = extractLinks(html, finalUrl);
-    const mailto = [...html.matchAll(/mailto:([^"'\s<>?]+)/gi)].map(match => cleanEmail(match[1]));
-    const plain = [...html.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(match => cleanEmail(match[0]));
+    const mailto = [...html.matchAll(/mailto:([^"'\s<>?]+)/gi)].map(match => cleanEmail(match[1] ?? '')).filter(Boolean);
+    const plain = [...html.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(match => cleanEmail(match[0])).filter(Boolean);
     const emails = unique([...mailto, ...plain]).filter(email => !email.endsWith('.png') && !email.endsWith('.jpg'));
 
     const whatsapp = firstByHost(links, ['wa.me', 'api.whatsapp.com', 'web.whatsapp.com']);
