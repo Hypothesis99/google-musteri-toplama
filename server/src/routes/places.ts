@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { searchPlaces } from '../services/googlePlaces.js';
+import { googlePlacesProvider } from '../providers/googlePlacesProvider.js';
 
 const router = Router();
 const schema = z.object({
@@ -13,8 +13,8 @@ const schema = z.object({
 router.post('/search', async (req, res, next) => {
   try {
     const input = schema.parse(req.body);
-    const results = await searchPlaces(input.query, input.location, input.minRating, input.minReviews);
-    res.json({ results });
+    const results = await googlePlacesProvider.search(input);
+    res.json({ provider: googlePlacesProvider.id, results });
   } catch (error) { next(error); }
 });
 
