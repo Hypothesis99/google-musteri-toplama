@@ -1,11 +1,15 @@
 # Google Müşteri Toplama — Proje Mimarisi ve Durum
 
-Bu dosya projenin yaşayan yol haritasıdır. Her geliştirme tamamlandığında ilgili madde işaretlenir.
+## 📊 MVP geliştirme durumu: **%100 — Kod + CI tamamlandı**
+
+`████████████████████ 100%`
+
+> Bu yüzde geliştirme kapsamını gösterir. Google API anahtarı, Supabase projesi ve gerçek Chrome ortamıyla yapılacak canlı kabul testleri aşağıda ayrı tutulur.
 
 ## Durum göstergeleri
 - ✅ Tamamlandı
-- 🟡 Devam ediyor
-- ⬜ Planlandı
+- 🧪 Canlı kabul testi gerekli
+- ⬜ Sonraki faz
 
 ## Mimari
 
@@ -18,7 +22,7 @@ flowchart LR
       POOL[Müşteri Havuzu / CRM]
       HIST[Arama Geçmişi]
       SETTINGS[Ayarlar]
-      SCORE[Lead Score görünümü]
+      SCORE[Lead Score]
     end
 
     EXT --> SEARCH
@@ -30,169 +34,196 @@ flowchart LR
     EXT --> API[Node.js + Express + TypeScript API]
 
     subgraph BACKEND[Backend Servisleri]
+      PROVIDER[LeadSourceProvider]
       PLACES[Google Places Provider]
       ENRICH[Website Enrichment]
       SCORING[Lead Scoring]
       CRM[CRM Service]
-      EXPORT[Export Service]
-      HISTORY[Search History]
+      EXPORT[CSV / XLSX Export]
     end
 
-    API --> PLACES
+    API --> PROVIDER
+    PROVIDER --> PLACES
+    PLACES --> GOOGLE[Google Places API New]
     API --> ENRICH
     API --> SCORING
     API --> CRM
     API --> EXPORT
-    API --> HISTORY
 
-    PLACES --> GOOGLE[Google Places API New]
     ENRICH --> WEB[İşletmenin kamuya açık web sitesi]
     CRM --> DB[(Supabase / PostgreSQL)]
-    HISTORY --> DB
     EXPORT --> DB
 
     ENRICH --> SCORING
     PLACES --> SCORING
     SCORING --> CRM
-
-    EXPORT --> CSV[CSV]
-    EXPORT --> XLSX[XLSX - planlı]
-    EXPORT --> SHEETS[Google Sheets - planlı]
 ```
 
 ## Kullanıcı akışı
 
 ```mermaid
 flowchart TD
-    A[Konum gir] --> B{Sektör girildi mi?}
-    B -- Evet --> C[Sektör + İl/İlçe ile ara]
-    B -- Hayır --> D[İl/İlçe için genel işletme ara]
+    A[İl / ilçe / konum gir] --> B{Sektör girildi mi?}
+    B -- Evet --> C[Sektör + konum ile ara]
+    B -- Hayır --> D[Konum için genel işletme ara]
     C --> E[Google Places sonuçları]
     D --> E
-    E --> F[Filtrele ve Lead Score hesapla]
-    F --> G[Sonuçları UI'da sırala]
-    G --> H{Müşteri seçildi mi?}
-    H -- Evet --> I[Müşteri Havuzuna ekle]
-    I --> J[CRM durumunu yönet]
-    J --> K[Not / etiket / iletişim]
-    E --> L[Website enrichment]
-    L --> M[E-posta / WhatsApp / sosyal medya / teknik sinyaller]
-    M --> F
+    E --> F[Lead Score hesapla]
+    F --> G[Sonuçları sırala / filtrele]
+    G --> H[Müşteri havuzuna ekle]
+    H --> I[CRM durumu / not / etiket]
+    E --> J[İletişimi Bul]
+    J --> K[E-posta / WhatsApp / sosyal medya / teknik sinyaller]
+    K --> F
+    I --> L[CSV / Excel export]
 ```
 
-## MVP Kontrol Listesi
+# ✅ MVP Kontrol Listesi
 
-### Altyapı
-- [x] ✅ Ayrı GitHub repository
-- [x] ✅ `codex/mvp-v1` geliştirme branch'i
-- [x] ✅ React + Vite + TypeScript extension yapısı
-- [x] ✅ Express + TypeScript backend
-- [x] ✅ Supabase/PostgreSQL şeması
-- [x] ✅ `.env.example` ve secret koruması
-- [x] ✅ GitHub Actions CI
-- [x] ✅ Typecheck + production build CI'da başarılı
+## Altyapı
+- [x] Ayrı GitHub repository
+- [x] `codex/mvp-v1` geliştirme branch'i
+- [x] React + Vite + TypeScript Chrome extension
+- [x] Express + TypeScript backend
+- [x] Supabase / PostgreSQL şeması
+- [x] `.env.example` ve secret koruması
+- [x] GitHub Actions CI
+- [x] LeadSourceProvider abstraction
+- [x] Google Places ilk provider
 
-### Müşteri Arama
-- [x] ✅ Google Places API (New) bağlantısı
-- [x] ✅ İl / ilçe-konum araması
-- [x] ✅ Sektör + konum araması
-- [x] ✅ Sektörü backend'de opsiyonel yapma
-- [ ] 🟡 Sektörü UI'da opsiyonel olarak netleştirme
-- [x] ✅ Minimum puan filtresi
-- [x] ✅ Minimum yorum filtresi
-- [x] ✅ Firma adı
-- [x] ✅ Kategori
-- [x] ✅ Telefon
-- [x] ✅ Website
-- [x] ✅ Adres
-- [x] ✅ Google Maps bağlantısı
-- [x] ✅ Puan / yorum sayısı
-- [x] ✅ Place ID
-- [x] ✅ Koordinat
-- [x] ✅ Çalışma saatleri
+## Müşteri Arama
+- [x] İl / ilçe / konum zorunlu
+- [x] Sektör isteğe bağlı
+- [x] Sektör + konum araması
+- [x] Yalnızca konumla genel işletme araması
+- [x] Minimum puan filtresi
+- [x] Minimum yorum filtresi
+- [x] Firma adı
+- [x] Kategori
+- [x] Telefon
+- [x] Website
+- [x] Adres
+- [x] Google Maps URL
+- [x] Puan / yorum sayısı
+- [x] Place ID
+- [x] Koordinat
+- [x] Çalışma saatleri
 
-### Lead Score
-- [x] ✅ 0–100 deterministik skor
-- [x] ✅ Skor nedenleri
-- [x] ✅ Sıcak / Orta / Düşük görünümü
-- [ ] 🟡 Enrichment sinyallerini skora dahil etme
-- [ ] ⬜ Kategori bazlı gelişmiş ağırlıklar
+## Lead Score
+- [x] 0–100 deterministik skor
+- [x] Türkçe skor nedenleri
+- [x] Sıcak / Orta / Düşük görünümü
+- [x] Website sinyalleri
+- [x] Telefon / e-posta / WhatsApp sinyalleri
+- [x] Puan / yorum sinyalleri
+- [x] Mobil uyumluluk / iletişim formu sinyalleri
+- [x] Sosyal medya eksikliği sinyalleri
+- [x] Konservatif kategori ağırlığı
+- [x] Unit testler
 
-### CRM / Müşteri Havuzu
-- [x] ✅ Müşteriyi havuza ekleme
-- [x] ✅ Place ID duplicate engelleme
-- [x] ✅ Havuzda arama
-- [x] ✅ Lead Score'a göre sıralama
-- [x] ✅ CRM durum değiştirme
-- [x] ✅ Durumlar: Yeni / Arandı / WhatsApp / Teklif / Görüşülüyor / Müşteri / Olumsuz
-- [ ] 🟡 Not düzenleme UI'sı
-- [ ] 🟡 Etiket sistemi UI'sı
-- [ ] 🟡 Son iletişim tarihi
-- [ ] ⬜ Gelişmiş CRM filtreleri
+## CRM / Müşteri Havuzu
+- [x] Müşteriyi havuza ekleme
+- [x] Place ID duplicate engelleme
+- [x] Lead Score'a göre sıralama
+- [x] Firma / kategori / e-posta / etiket araması
+- [x] CRM durumları
+- [x] Durum değiştirme
+- [x] Not düzenleme
+- [x] Etiket sistemi
+- [x] Son iletişim tarihi
+- [x] Minimum Lead Score filtresi
+- [x] Durum filtresi
+- [x] Website var / websitesiz filtresi
+- [x] E-posta filtresi
+- [x] WhatsApp filtresi
+- [x] Instagram filtresi
 
-### Website Enrichment
-- [ ] 🟡 Güvenli website fetch servisi
-- [ ] 🟡 Kamuya açık e-posta bulma
-- [ ] 🟡 WhatsApp bağlantısı bulma
-- [ ] 🟡 Instagram bağlantısı bulma
-- [ ] 🟡 Facebook bağlantısı bulma
-- [ ] 🟡 LinkedIn bağlantısı bulma
-- [ ] 🟡 TikTok bağlantısı bulma
-- [ ] 🟡 İletişim sayfası bulma
-- [ ] 🟡 İletişim formu var/yok
-- [ ] 🟡 SSL sinyali
-- [ ] 🟡 Mobil uyumluluk sinyali
-- [ ] 🟡 WordPress / Wix / Shopify sinyalleri
-- [ ] 🟡 SSRF / private-IP / timeout / redirect koruması
+## Website Enrichment
+- [x] Güvenli website fetch servisi
+- [x] Kamuya açık e-posta bulma
+- [x] WhatsApp bağlantısı bulma
+- [x] Instagram bulma
+- [x] Facebook bulma
+- [x] LinkedIn bulma
+- [x] TikTok bulma
+- [x] İletişim sayfası bulma
+- [x] İletişim formu sinyali
+- [x] SSL sinyali
+- [x] Mobil viewport sinyali
+- [x] WordPress / Wix / Shopify sinyalleri
+- [x] SSRF koruması
+- [x] Private / loopback IP bloklama
+- [x] HTTP timeout
+- [x] Redirect limiti
+- [x] HTML boyut limiti
+- [x] Enrichment başarısızlığında ana lead kaydını koruma
 
-### Arama Geçmişi
-- [ ] 🟡 Aramaları kaydetme
-- [ ] 🟡 Tarih / sektör / konum / filtre bilgisi
-- [ ] 🟡 Önceki aramayı tek tıkla tekrar çalıştırma
-- [ ] ⬜ Geçmiş aramalarını silme
+## Arama Geçmişi
+- [x] Aramaları kaydetme
+- [x] Tarih / sektör / konum / filtre bilgisi
+- [x] Sonuç sayısı
+- [x] Önceki aramayı tek tıkla tekrar çalıştırma
+- [x] Arama geçmişini temizleme
 
-### Export / Entegrasyon
-- [x] ✅ CSV export
-- [ ] ⬜ XLSX export
-- [ ] ⬜ Kolon seçerek export
-- [ ] ⬜ Google Sheets adapter
+## Export
+- [x] CSV export
+- [x] XLSX / Excel export
 
-### UI / UX
-- [x] ✅ Türkçe arayüz
-- [x] ✅ 460px geniş extension layout
-- [x] ✅ Müşteri Bul / Havuz / Geçmiş / Ayarlar navigasyonu
-- [x] ✅ Skeleton loading
-- [x] ✅ Empty / error / success state'leri
-- [x] ✅ Lead Score görünürlüğü
-- [x] ✅ Toplu seçim + sticky aksiyon barı
-- [x] ✅ CRM durum kontrolü
-- [ ] 🟡 Sektör alanını opsiyonel olarak açıklama
-- [ ] 🟡 Enrichment durumunu kartlarda gösterme
-- [ ] 🟡 Lead detay drawer / detay görünümü
-- [ ] 🟡 Son görsel kalite kontrolü
+## UI / UX
+- [x] Türkçe arayüz
+- [x] 460px extension layout
+- [x] Müşteri Bul / Havuz / Geçmiş / Ayarlar navigasyonu
+- [x] Sektörün isteğe bağlı olduğunu net gösterme
+- [x] Zorunlu konum alanını net gösterme
+- [x] Skeleton loading
+- [x] Empty / error / success state'leri
+- [x] Lead Score görünürlüğü
+- [x] Toplu seçim + sticky aksiyon barı
+- [x] Enrichment durum chip'leri
+- [x] Lead detay görünümü
+- [x] Skor nedenleri görünümü
+- [x] CRM not / etiket düzenleme
+- [x] Gelişmiş CRM filtreleri
+- [x] CSV + Excel aksiyonları
 
-### Güvenlik
-- [x] ✅ API anahtarlarını backend env'de tutma
-- [x] ✅ Zod input validation
-- [x] ✅ Helmet
-- [x] ✅ Rate limiting
-- [x] ✅ Teknik stack trace'i kullanıcıya göstermeme
-- [ ] 🟡 Website enrichment SSRF koruması
-- [ ] 🟡 HTML boyut limiti
-- [ ] 🟡 HTTP timeout
+## Güvenlik / Kalite
+- [x] API anahtarlarını backend env'de tutma
+- [x] Zod input validation
+- [x] Helmet
+- [x] Rate limiting
+- [x] Teknik stack trace'i kullanıcıya göstermeme
+- [x] TypeScript strict
+- [x] Typecheck CI'da başarılı
+- [x] Unit test CI'da başarılı
+- [x] Production build CI'da başarılı
+- [x] Chrome extension build artifact CI'da başarılı
 
-## Sonraki Faz
-- [ ] ⬜ AI kişiselleştirilmiş satış mesajı
-- [ ] ⬜ WhatsApp taslağı
-- [ ] ⬜ E-posta taslağı
-- [ ] ⬜ Periyodik tekrar tarama
-- [ ] ⬜ Yeni işletme tespiti
-- [ ] ⬜ Doğal dil komutu: “Orhangazi'de web sitesi olmayan işletmeleri bul”
-- [ ] ⬜ MCP / agent arayüzü
-- [ ] ⬜ Alternatif veri kaynağı provider'ı
+# 🧪 Canlı Kabul — geliştirme yüzdesine dahil değil
+- [ ] Google Places API (New) anahtarı gerçek ortamda tanımlandı
+- [ ] Supabase URL ve service role key tanımlandı
+- [ ] `supabase/schema.sql` gerçek Supabase projesinde çalıştırıldı
+- [ ] Backend `/health` gerçek ortamda kontrol edildi
+- [ ] Sektörlü gerçek arama yapıldı
+- [ ] Yalnızca il / ilçe ile gerçek arama yapıldı
+- [ ] Müşteri Supabase havuzuna kaydedildi
+- [ ] Website enrichment gerçek firma sitesiyle denendi
+- [ ] CSV ve Excel export gerçek veriyle indirildi
+- [ ] Chrome extension artifact Chrome'da `Load unpacked` ile açıldı
+- [ ] Son görsel / kullanım kabulü yapıldı
+
+# ⬜ Sonraki Faz — MVP %100 hesabına dahil değil
+- [ ] Google Sheets entegrasyonu
+- [ ] Kolon seçerek export
+- [ ] AI kişiselleştirilmiş satış mesajı
+- [ ] WhatsApp taslağı
+- [ ] E-posta taslağı
+- [ ] Periyodik tekrar tarama
+- [ ] Yeni işletme tespiti
+- [ ] Doğal dil komutları
+- [ ] MCP / agent arayüzü
+- [ ] Alternatif ikinci veri kaynağı provider'ı
 
 ## Aktif geliştirme
-
 **Branch:** `codex/mvp-v1`  
 **PR:** #2 — MVP v1: Chrome extension + Places API + CRM  
-**Ana hedef:** İlk kullanılabilir sürümü stabil, temiz ve satış odaklı hale getirmek.
+**Durum:** Kod + CI tamamlandı; canlı kabul için gerçek API/Supabase ayarları gerekiyor.
