@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { searchPlaces } from '../services/googlePlaces.js';
 
 const router = Router();
-const schema = z.object({ query: z.string().trim().min(2).max(100), location: z.string().trim().min(2).max(120), minRating: z.number().min(0).max(5).optional(), minReviews: z.number().int().min(0).optional() });
+const schema = z.object({
+  query: z.string().trim().max(100).optional().default(''),
+  location: z.string().trim().min(2).max(120),
+  minRating: z.number().min(0).max(5).optional(),
+  minReviews: z.number().int().min(0).optional()
+});
 
 router.post('/search', async (req, res, next) => {
   try {
