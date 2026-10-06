@@ -18,6 +18,8 @@ interface GooglePlace {
 
 export async function searchPlaces(query: string, location: string, minRating?: number, minReviews?: number): Promise<LeadCandidate[]> {
   requireGooglePlacesKey();
+  const textQuery = query.trim() ? `${query.trim()} ${location}` : `işletmeler ${location}`;
+
   const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
     method: 'POST',
     headers: {
@@ -25,7 +27,7 @@ export async function searchPlaces(query: string, location: string, minRating?: 
       'X-Goog-Api-Key': config.googlePlacesApiKey,
       'X-Goog-FieldMask': 'places.id,places.displayName,places.primaryTypeDisplayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.rating,places.userRatingCount,places.location,places.regularOpeningHours'
     },
-    body: JSON.stringify({ textQuery: `${query} ${location}`, languageCode: 'tr', maxResultCount: 20 })
+    body: JSON.stringify({ textQuery, languageCode: 'tr', maxResultCount: 20 })
   });
 
   if (!response.ok) {
