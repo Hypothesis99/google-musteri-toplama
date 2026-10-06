@@ -3,7 +3,9 @@ import { API_URL, api } from './api';
 import type { LeadCandidate, LeadStatus, SavedLead, SearchHistoryItem, SearchPayload } from './types';
 
 type Tab = 'search' | 'pool' | 'history' | 'settings';
+type ContactFilter = 'Tümü' | 'Website var' | 'Websitesiz' | 'E-posta' | 'WhatsApp' | 'Instagram';
 const STATUSES: LeadStatus[] = ['Yeni', 'Arandı', 'WhatsApp Gönderildi', 'Teklif Verildi', 'Görüşülüyor', 'Müşteri Oldu', 'Olumsuz'];
+const CONTACT_FILTERS: ContactFilter[] = ['Tümü', 'Website var', 'Websitesiz', 'E-posta', 'WhatsApp', 'Instagram'];
 const HISTORY_KEY = 'google-musteri-toplama:search-history';
 
 function loadHistory(): SearchHistoryItem[] {
@@ -20,6 +22,16 @@ function ContactLink({ href, label }: { href?: string; label: string }) {
   return href
     ? <a className="contact-link" href={href} target="_blank" rel="noreferrer">{label}</a>
     : <span className="contact-missing">{label}: yok</span>;
+}
+
+function matchesContactFilter(lead: SavedLead, filter: ContactFilter): boolean {
+  if (filter === 'Tümü') return true;
+  if (filter === 'Website var') return Boolean(lead.website);
+  if (filter === 'Websitesiz') return !lead.website;
+  if (filter === 'E-posta') return Boolean(lead.email);
+  if (filter === 'WhatsApp') return Boolean(lead.whatsapp);
+  if (filter === 'Instagram') return Boolean(lead.instagram);
+  return true;
 }
 
 function SavedMetaEditor({ lead, onSave }: { lead: SavedLead; onSave: (notes: string, tags: string[]) => Promise<void> }) {
@@ -121,6 +133,8 @@ export default function App() {
   const [minReviews, setMinReviews] = useState('');
   const [poolQuery, setPoolQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'Tümü' | LeadStatus>('Tümü');
+  const [poolMinScore, setPoolMinScore] = useState('');
+  const [contactFilter, setContactFilter] = useState<ContactFilter>('Tümü');
   const [results, setResults] = useState<LeadCandidate[]>([]);
   const [pool, setPool] = useState<SavedLead[]>([]);
   const [history, setHistory] = useState<SearchHistoryItem[]>(loadHistory);
@@ -131,10 +145,13 @@ export default function App() {
   const [notice, setNotice] = useState('');
 
   const selectedCount = selected.size;
+  const hasPoolFilters = Boolean(poolQuery || poolMinScore || statusFilter !== 'Tümü' || contactFilter !== 'Tümü');
   const sortedPool = useMemo(() => [...pool]
     .filter(lead => `${lead.name} ${lead.category ?? ''} ${lead.email ?? ''} ${(lead.tags ?? []).join(' ')}`.toLowerCase().includes(poolQuery.toLowerCase()))
     .filter(lead => statusFilter === 'Tümü' || lead.status === statusFilter)
-    .sort((a, b) => b.leadScore - a.leadScore), [pool, poolQuery, statusFilter]);
+    .filter(lead => !poolMinScore || lead.leadScore >= Number(poolMinScore))
+    .filter(lead => matchesContactFilter(lead, contactFilter))
+    .sort((a, b) => b.leadScore - a.leadScore), [pool, poolQuery, statusFilter, poolMinScore, contactFilter]);
 
   useEffect(() => { if (tab === 'pool') void refreshPool(); }, [tab]);
 
@@ -264,8 +281,13 @@ export default function App() {
 
     {tab === 'pool' && <main>
       <section className="section-head"><div><h2>Müşteri Havuzu</h2><p>En güçlü adaylar önce gösterilir.</p></div><div className="export-group"><a className="export-button" href={`${API_URL}/api/leads/export.csv`} target="_blank" rel="noreferrer">CSV</a><a className="export-button" href={`${API_URL}/api/leads/export.xlsx`} target="_blank" rel="noreferrer">Excel</a></div></section>
-      <div className="pool-filters"><input className="pool-search" value={poolQuery} onChange={event => setPoolQuery(event.target.value)} placeholder="Firma, kategori, e-posta veya etiket ara…" /><select value={statusFilter} onChange={event => setStatusFilter(event.target.value as 'Tümü' | LeadStatus)}><option>Tümü</option>{STATUSES.map(status => <option key={status}>{status}</option>)}</select></div>
-      {sortedPool.length ? sortedPool.map(lead => <LeadCard key={lead.id} lead={lead} saved={lead} onStatusChange={status => changeStatus(lead, status)} onEnrich={lead.website ? () => enrichSaved(lead) : undefined} enriching={enriching.has(lead.id)} onSaveMeta={(notes, tags) => saveMeta(lead, notes, tags)} />) : <div className="empty"><strong>{poolQuery || statusFilter !== 'Tümü' ? 'Filtreye uygun müşteri yok.' : 'Havuz henüz boş.'}</strong><span>{poolQuery || statusFilter !== 'Tümü' ? 'Filtreleri değiştirebilirsin.' : 'Müşteri Bul ekranından aday ekleyebilirsin.'}</span></div>}
+      <div className="pool-filters">
+        <input className="pool-search" value={poolQuery} onChange={event => setPoolQuery(event.target.value)} placeholder="Firma, kategori, e-posta veya etiket ara…" />
+        <select aria-label="CRM durumu" value={statusFilter} onChange={event => setStatusFilter(event.target.value as 'Tümü' | LeadStatus)}><option>Tümü</option>{STATUSES.map(status => <option key={status}>{status}</option>)}</select>
+        <input aria-label="Minimum lead score" value={poolMinScore} onChange={event => setPoolMinScore(event.target.value)} type="number" min="0" max="100" placeholder="Min. Lead Score" />
+        <select aria-label="İletişim filtresi" value={contactFilter} onChange={event => setContactFilter(event.target.value as ContactFilter)}>{CONTACT_FILTERS.map(filter => <option key={filter}>{filter}</option>)}</select>
+      </div>
+      {sortedPool.length ? sortedPool.map(lead => <LeadCard key={lead.id} lead={lead} saved={lead} onStatusChange={status => changeStatus(lead, status)} onEnrich={lead.website ? () => enrichSaved(lead) : undefined} enriching={enriching.has(lead.id)} onSaveMeta={(notes, tags) => saveMeta(lead, notes, tags)} />) : <div className="empty"><strong>{hasPoolFilters ? 'Filtreye uygun müşteri yok.' : 'Havuz henüz boş.'}</strong><span>{hasPoolFilters ? 'Filtreleri değiştirebilirsin.' : 'Müşteri Bul ekranından aday ekleyebilirsin.'}</span></div>}
     </main>}
 
     {tab === 'history' && <main>
