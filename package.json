@@ -1,0 +1,11 @@
+{
+  "name": "google-musteri-toplama",
+  "private": true,
+  "workspaces": ["extension", "server"],
+  "scripts": {
+    "dev:extension": "npm --workspace extension run dev",
+    "dev:server": "npm --workspace server run dev",
+    "build": "npm --workspace extension run build && npm --workspace server run build",
+    "typecheck": "npm --workspace extension run typecheck && npm --workspace server run typecheck"
+  }
+}
