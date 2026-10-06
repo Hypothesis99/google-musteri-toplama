@@ -6,6 +6,7 @@ import { ZodError } from 'zod';
 import { config } from './config.js';
 import placesRouter from './routes/places.js';
 import leadsRouter from './routes/leads.js';
+import enrichmentRouter from './routes/enrichment.js';
 
 const app = express();
 app.use(helmet());
@@ -16,6 +17,7 @@ app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', le
 app.get('/health', (_req,res)=>res.json({ok:true,service:'google-musteri-toplama',time:new Date().toISOString()}));
 app.use('/api/places', placesRouter);
 app.use('/api/leads', leadsRouter);
+app.use('/api/enrichment', enrichmentRouter);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(error);

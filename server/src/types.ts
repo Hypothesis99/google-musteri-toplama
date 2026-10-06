@@ -11,6 +11,18 @@ export interface LeadCandidate {
   latitude?: number;
   longitude?: number;
   openingHours?: string[];
+  email?: string;
+  whatsapp?: string;
+  instagram?: string;
+  facebook?: string;
+  linkedin?: string;
+  tiktok?: string;
+  contactPage?: string;
+  hasContactForm?: boolean;
+  ssl?: boolean;
+  mobileFriendly?: boolean;
+  technology?: string[];
+  enrichmentStatus?: 'idle' | 'done' | 'failed';
   leadScore: number;
   scoreReasons: string[];
 }
