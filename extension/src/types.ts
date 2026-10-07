@@ -5,6 +5,9 @@ export interface LeadCandidate {
   name: string;
   category?: string;
   phone?: string;
+  phoneType?: 'Cep' | 'Sabit' | 'Diğer';
+  mobilePhone?: string;
+  landlinePhone?: string;
   website?: string;
   address?: string;
   mapsUrl?: string;
@@ -16,9 +19,13 @@ export interface LeadCandidate {
   email?: string;
   whatsapp?: string;
   instagram?: string;
+  instagramFollowers?: number;
   facebook?: string;
+  facebookFollowers?: number;
   linkedin?: string;
+  linkedinFollowers?: number;
   tiktok?: string;
+  tiktokFollowers?: number;
   contactPage?: string;
   hasContactForm?: boolean;
   ssl?: boolean;
