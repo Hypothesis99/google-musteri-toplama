@@ -1,36 +1,128 @@
 import { Router } from 'express';
 import ExcelJS from 'exceljs';
 import { z } from 'zod';
-import { getSupabase } from '../services/supabase.js';
 import { enrichLead } from '../services/enrichment.js';
+import {
+  getLeadFromGoogleSheet,
+  getLeadsFromGoogleSheet,
+  replaceLeadInGoogleSheet,
+  updateLeadInGoogleSheet,
+  upsertLeadToGoogleSheet,
+  type GoogleSheetLead,
+  type LeadStatus
+} from '../services/googleSheets.js';
 
 const router = Router();
+const statusSchema = z.enum(['Yeni','Arandı','WhatsApp Gönderildi','Teklif Verildi','Görüşülüyor','Müşteri Oldu','Olumsuz']);
 const leadSchema = z.object({
-  placeId:z.string().min(1), name:z.string().min(1), category:z.string().optional(), phone:z.string().optional(), website:z.string().url().optional(), address:z.string().optional(), mapsUrl:z.string().url().optional(), rating:z.number().optional(), reviewCount:z.number().int().optional(), latitude:z.number().optional(), longitude:z.number().optional(), openingHours:z.array(z.string()).optional(),
-  email:z.string().optional(), whatsapp:z.string().url().optional(), instagram:z.string().url().optional(), facebook:z.string().url().optional(), linkedin:z.string().url().optional(), tiktok:z.string().url().optional(), contactPage:z.string().url().optional(), hasContactForm:z.boolean().optional(), ssl:z.boolean().optional(), mobileFriendly:z.boolean().optional(), technology:z.array(z.string()).optional(), enrichmentStatus:z.enum(['idle','done','failed']).optional(),
-  leadScore:z.number().min(0).max(100), scoreReasons:z.array(z.string())
+  placeId:z.string().min(1), name:z.string().min(1), category:z.string().optional(), phone:z.string().optional(), phoneType:z.enum(['Cep','Sabit','Diğer']).optional(), mobilePhone:z.string().optional(), landlinePhone:z.string().optional(), website:z.string().optional(), address:z.string().optional(), mapsUrl:z.string().optional(), rating:z.number().optional(), reviewCount:z.number().int().optional(), latitude:z.number().optional(), longitude:z.number().optional(), openingHours:z.array(z.string()).optional(),
+  email:z.string().optional(), whatsapp:z.string().optional(), instagram:z.string().optional(), instagramFollowers:z.number().int().nonnegative().optional(), facebook:z.string().optional(), facebookFollowers:z.number().int().nonnegative().optional(), linkedin:z.string().optional(), linkedinFollowers:z.number().int().nonnegative().optional(), tiktok:z.string().optional(), tiktokFollowers:z.number().int().nonnegative().optional(), contactPage:z.string().optional(), hasContactForm:z.boolean().optional(), ssl:z.boolean().optional(), mobileFriendly:z.boolean().optional(), technology:z.array(z.string()).optional(), enrichmentStatus:z.enum(['idle','done','failed']).optional(),
+  leadScore:z.number().min(0).max(100), scoreReasons:z.array(z.string()), status:statusSchema.optional(), notes:z.string().optional(), tags:z.array(z.string()).optional(), lastContactedAt:z.string().nullable().optional()
 });
 const patchSchema = z.object({
-  status:z.enum(['Yeni','Arandı','WhatsApp Gönderildi','Teklif Verildi','Görüşülüyor','Müşteri Oldu','Olumsuz']).optional(),
-  notes:z.string().max(5000).optional(),
-  tags:z.array(z.string().trim().min(1).max(50)).max(30).optional(),
-  lastContactedAt:z.string().datetime().nullable().optional()
+  status:statusSchema.optional(), notes:z.string().max(5000).optional(), tags:z.array(z.string().trim().min(1).max(50)).max(30).optional(), lastContactedAt:z.string().datetime().nullable().optional()
 });
 
-router.get('/', async (_req,res,next)=>{ try { const {data,error}=await getSupabase().from('leads').select('*').order('lead_score',{ascending:false}); if(error) throw error; res.json({leads:(data??[]).map(dbToLead)}); } catch(e){next(e);} });
+router.get('/', async (_req,res,next)=>{ try { res.json({leads:await getLeadsFromGoogleSheet()}); } catch(e){next(e);} });
 
-router.post('/', async (req,res,next)=>{ try { const input=leadSchema.parse(req.body); const row=leadToDb(input); const sb=getSupabase(); const existing=await sb.from('leads').select('*').eq('place_id',input.placeId).maybeSingle(); if(existing.error) throw existing.error; if(existing.data) return res.json({lead:dbToLead(existing.data),duplicate:true}); const {data,error}=await sb.from('leads').insert(row).select('*').single(); if(error) throw error; res.status(201).json({lead:dbToLead(data)}); } catch(e){next(e);} });
+router.post('/', async (req,res,next)=>{ try {
+  const input=leadSchema.parse(req.body);
+  const result=await upsertLeadToGoogleSheet(input);
+  res.status(result.duplicate ? 200 : 201).json(result);
+} catch(e){next(e);} });
 
-router.patch('/:id', async (req,res,next)=>{ try { const patch=patchSchema.parse(req.body); const now=new Date().toISOString(); const update:any={updated_at:now}; if(patch.status!==undefined) update.status=patch.status; if(patch.notes!==undefined) update.notes=patch.notes; if(patch.tags!==undefined) update.tags=patch.tags; if(patch.lastContactedAt!==undefined) update.last_contacted_at=patch.lastContactedAt; else if(patch.status && patch.status!=='Yeni' && patch.status!=='Olumsuz') update.last_contacted_at=now; const {data,error}=await getSupabase().from('leads').update(update).eq('id',req.params.id).select('*').single(); if(error) throw error; res.json({lead:dbToLead(data)}); } catch(e){next(e);} });
+router.patch('/:id', async (req,res,next)=>{ try {
+  const patch=patchSchema.parse(req.body);
+  const lead=await updateLeadInGoogleSheet(req.params.id, patch as {status?:LeadStatus;notes?:string;tags?:string[];lastContactedAt?:string|null});
+  res.json({lead});
+} catch(e){next(e);} });
 
-router.post('/:id/enrich', async (req,res,next)=>{ try { const sb=getSupabase(); const current=await sb.from('leads').select('*').eq('id',req.params.id).single(); if(current.error) throw current.error; const enriched=await enrichLead(dbToLead(current.data)); const update=leadToDb(enriched); const {data,error}=await sb.from('leads').update({...update,updated_at:new Date().toISOString()}).eq('id',req.params.id).select('*').single(); if(error) throw error; res.json({lead:dbToLead(data)}); } catch(e){next(e);} });
+router.post('/:id/enrich', async (req,res,next)=>{ try {
+  const current=await getLeadFromGoogleSheet(req.params.id);
+  if(!current) throw new Error('Müşteri Google Sheets havuzunda bulunamadı.');
+  const enriched=await enrichLead(current);
+  const saved:GoogleSheetLead={...current,...enriched,id:current.id,status:current.status,tags:current.tags,notes:current.notes,lastContactedAt:current.lastContactedAt};
+  await replaceLeadInGoogleSheet(saved);
+  res.json({lead:saved});
+} catch(e){next(e);} });
 
-router.get('/export.csv', async (_req,res,next)=>{ try { const rows=await getRows(); const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`; const csv=['Firma,Kategori,Telefon,E-posta,WhatsApp,Website,Instagram,Facebook,LinkedIn,Adres,Puan,Yorum,Lead Score,Durum,Etiketler,Son İletişim',...rows.map(r=>[r.name,r.category,r.phone,r.email,r.whatsapp,r.website,r.instagram,r.facebook,r.linkedin,r.address,r.rating,r.review_count,r.lead_score,r.status,(r.tags??[]).join(' | '),r.last_contacted_at].map(esc).join(','))].join('\n'); res.type('text/csv').setHeader('Content-Disposition','attachment; filename="musteriler.csv"').send('\uFEFF'+csv); } catch(e){next(e);} });
+router.get('/export.csv', async (_req,res,next)=>{ try {
+  const rows=await getLeadsFromGoogleSheet();
+  const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;
+  const headers=['Firma','Kategori','Telefon','Telefon Türü','Cep Telefonu','Sabit Hat','E-posta','WhatsApp','Website','Website Durumu','Instagram','Instagram Takipçi','Facebook','Facebook Takipçi','LinkedIn','LinkedIn Takipçi','TikTok','TikTok Takipçi','Google Maps','Adres','Puan','Yorum','Lead Score','Durum','Etiketler','Notlar','Son İletişim'];
+  const csv=[headers.join(','),...rows.map(r=>[
+    r.name,r.category,r.phone,r.phoneType,r.mobilePhone,r.landlinePhone,r.email,r.whatsapp,r.website,r.website?'Var':'Yok',
+    r.instagram,r.instagramFollowers,r.facebook,r.facebookFollowers,r.linkedin,r.linkedinFollowers,r.tiktok,r.tiktokFollowers,
+    r.mapsUrl,r.address,r.rating,r.reviewCount,r.leadScore,r.status,(r.tags??[]).join(' | '),r.notes,r.lastContactedAt
+  ].map(esc).join(','))].join('\n');
+  res.type('text/csv').setHeader('Content-Disposition','attachment; filename="musteriler.csv"').send('\uFEFF'+csv);
+} catch(e){next(e);} });
 
-router.get('/export.xlsx', async (_req,res,next)=>{ try { const rows=await getRows(); const workbook=new ExcelJS.Workbook(); const sheet=workbook.addWorksheet('Müşteriler'); sheet.columns=[['Firma','name'],['Kategori','category'],['Telefon','phone'],['E-posta','email'],['WhatsApp','whatsapp'],['Website','website'],['Instagram','instagram'],['Facebook','facebook'],['LinkedIn','linkedin'],['Adres','address'],['Puan','rating'],['Yorum','review_count'],['Lead Score','lead_score'],['Durum','status'],['Etiketler','tags'],['Son İletişim','last_contacted_at']].map(([header,key])=>({header,key,width:20})); for(const row of rows) sheet.addRow({...row,tags:(row.tags??[]).join(', ')}); sheet.getRow(1).font={bold:true}; sheet.views=[{state:'frozen',ySplit:1}]; const buffer=await workbook.xlsx.writeBuffer(); res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); res.setHeader('Content-Disposition','attachment; filename="musteriler.xlsx"'); res.send(Buffer.from(buffer)); } catch(e){next(e);} });
+router.get('/export.xlsx', async (_req,res,next)=>{ try {
+  const rows=await getLeadsFromGoogleSheet();
+  const workbook=new ExcelJS.Workbook();
+  workbook.creator='Contrast Creative Studio';
+  workbook.created=new Date();
 
-async function getRows(){ const {data,error}=await getSupabase().from('leads').select('*').order('lead_score',{ascending:false}); if(error) throw error; return data??[]; }
-function leadToDb(l:z.infer<typeof leadSchema> | any){return{place_id:l.placeId,name:l.name,category:l.category,phone:l.phone,website:l.website,address:l.address,maps_url:l.mapsUrl,rating:l.rating,review_count:l.reviewCount,latitude:l.latitude,longitude:l.longitude,opening_hours:l.openingHours,email:l.email,whatsapp:l.whatsapp,instagram:l.instagram,facebook:l.facebook,linkedin:l.linkedin,tiktok:l.tiktok,contact_page:l.contactPage,has_contact_form:l.hasContactForm,ssl:l.ssl,mobile_friendly:l.mobileFriendly,technology:l.technology??[],enrichment_status:l.enrichmentStatus??'idle',lead_score:l.leadScore,score_reasons:l.scoreReasons};}
-function dbToLead(r:any){return{id:r.id,placeId:r.place_id,name:r.name,category:r.category,phone:r.phone,website:r.website,address:r.address,mapsUrl:r.maps_url,rating:r.rating,reviewCount:r.review_count,latitude:r.latitude,longitude:r.longitude,openingHours:r.opening_hours??[],email:r.email,whatsapp:r.whatsapp,instagram:r.instagram,facebook:r.facebook,linkedin:r.linkedin,tiktok:r.tiktok,contactPage:r.contact_page,hasContactForm:r.has_contact_form,ssl:r.ssl,mobileFriendly:r.mobile_friendly,technology:r.technology??[],enrichmentStatus:r.enrichment_status??'idle',leadScore:r.lead_score??0,scoreReasons:r.score_reasons??[],status:r.status,notes:r.notes,tags:r.tags??[],lastContactedAt:r.last_contacted_at};}
+  const summary=workbook.addWorksheet('Özet',{views:[{showGridLines:false}]});
+  summary.mergeCells('A1:D1');
+  summary.getCell('A1').value='Google Müşteri Toplama — CRM Özeti';
+  summary.getCell('A1').font={bold:true,size:18,color:{argb:'FFFFFFFF'}};
+  summary.getCell('A1').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF172033'}};
+  summary.getCell('A1').alignment={vertical:'middle'};
+  summary.getRow(1).height=32;
+  const metrics=[
+    ['Toplam Müşteri',rows.length],
+    ['Websitesiz',rows.filter(r=>!r.website).length],
+    ['Cep Telefonu Olan',rows.filter(r=>r.mobilePhone || r.phoneType==='Cep').length],
+    ['Müşteri Oldu',rows.filter(r=>r.status==='Müşteri Oldu').length],
+    ['Ortalama Lead Score',rows.length?Math.round(rows.reduce((sum,r)=>sum+r.leadScore,0)/rows.length):0]
+  ];
+  metrics.forEach(([label,val],index)=>{const row=index+3;summary.getCell(`A${row}`).value=label;summary.getCell(`B${row}`).value=val as number;summary.getCell(`A${row}`).font={bold:true};summary.getCell(`A${row}:B${row}` as any);});
+  summary.getColumn('A').width=24; summary.getColumn('B').width=18;
+
+  const sheet=workbook.addWorksheet('Müşteriler',{views:[{state:'frozen',ySplit:1}]});
+  const columns:Array<{header:string;key:string;width:number}>=[
+    {header:'Firma',key:'name',width:30},{header:'Kategori',key:'category',width:22},{header:'Telefon',key:'phone',width:18},{header:'Telefon Türü',key:'phoneType',width:14},{header:'Cep Telefonu',key:'mobilePhone',width:18},{header:'Sabit Hat',key:'landlinePhone',width:18},
+    {header:'E-posta',key:'email',width:28},{header:'WhatsApp',key:'whatsapp',width:24},{header:'Website',key:'website',width:32},{header:'Website Durumu',key:'websiteStatus',width:16},
+    {header:'Instagram',key:'instagram',width:28},{header:'IG Takipçi',key:'instagramFollowers',width:14},{header:'Facebook',key:'facebook',width:28},{header:'FB Takipçi',key:'facebookFollowers',width:14},
+    {header:'LinkedIn',key:'linkedin',width:28},{header:'LI Takipçi',key:'linkedinFollowers',width:14},{header:'TikTok',key:'tiktok',width:28},{header:'TikTok Takipçi',key:'tiktokFollowers',width:16},
+    {header:'Google Maps',key:'mapsUrl',width:30},{header:'Adres',key:'address',width:42},{header:'Puan',key:'rating',width:10},{header:'Yorum',key:'reviewCount',width:12},{header:'Lead Score',key:'leadScore',width:13},{header:'Durum',key:'status',width:22},{header:'Etiketler',key:'tags',width:24},{header:'Notlar',key:'notes',width:36},{header:'Son İletişim',key:'lastContactedAt',width:22}
+  ];
+  sheet.columns=columns;
+  for(const lead of rows) sheet.addRow({
+    ...lead,websiteStatus:lead.website?'Var':'Yok',tags:(lead.tags??[]).join(', ')
+  });
+
+  const header=sheet.getRow(1);
+  header.height=28;
+  header.font={bold:true,color:{argb:'FFFFFFFF'}};
+  header.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF172033'}};
+  header.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+  sheet.autoFilter={from:'A1',to:'AA1'};
+  sheet.properties.defaultRowHeight=20;
+
+  for(let rowIndex=2;rowIndex<=sheet.rowCount;rowIndex++){
+    const row=sheet.getRow(rowIndex);
+    row.alignment={vertical:'top',wrapText:true};
+    if(rowIndex%2===0) row.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF7F8FA'}};
+    const links=[['G','email'],['H','whatsapp'],['I','website'],['K','instagram'],['M','facebook'],['O','linkedin'],['Q','tiktok'],['S','mapsUrl']] as const;
+    for(const [col,key] of links){const url=(rows[rowIndex-2] as any)?.[key];if(url){const hyperlink=key==='email'?`mailto:${url}`:String(url);sheet.getCell(`${col}${rowIndex}`).value={text:String(url),hyperlink};sheet.getCell(`${col}${rowIndex}`).font={color:{argb:'FF2F5597'},underline:true};}}
+    sheet.getCell(`U${rowIndex}`).numFmt='0.0';
+    sheet.getCell(`V${rowIndex}`).numFmt='0';
+    sheet.getCell(`W${rowIndex}`).numFmt='0';
+    sheet.getCell(`X${rowIndex}`).dataValidation={type:'list',allowBlank:false,formulae:['"Yeni,Arandı,WhatsApp Gönderildi,Teklif Verildi,Görüşülüyor,Müşteri Oldu,Olumsuz"']};
+  }
+
+  if(sheet.rowCount>=2){
+    sheet.addConditionalFormatting({ref:`J2:J${sheet.rowCount}`,rules:[{type:'expression',formulae:['$J2="Yok"'],style:{fill:{type:'pattern',pattern:'solid',bgColor:{argb:'FFFFE5E5'},fgColor:{argb:'FFFFE5E5'}},font:{color:{argb:'FF9C2F2F'},bold:true}}}]});
+    sheet.addConditionalFormatting({ref:`X2:X${sheet.rowCount}`,rules:[{type:'expression',formulae:['$X2="Müşteri Oldu"'],style:{fill:{type:'pattern',pattern:'solid',bgColor:{argb:'FFE1F2E5'},fgColor:{argb:'FFE1F2E5'}},font:{color:{argb:'FF24613A'},bold:true}}}]});
+  }
+
+  const buffer=await workbook.xlsx.writeBuffer();
+  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition','attachment; filename="contrast-musteri-havuzu.xlsx"');
+  res.send(Buffer.from(buffer));
+} catch(e){next(e);} });
 
 export default router;
