@@ -1,87 +1,63 @@
 # Google Müşteri Toplama
 
-Google Places API üzerinden potansiyel müşteri adayları bulmak, kamuya açık website iletişim bilgileriyle zenginleştirmek, lead score ile önceliklendirmek ve CRM havuzunda yönetmek için geliştirilen Chrome eklentisi + backend projesi.
+Contrast Creative Studio için geliştirilen Chrome eklentisi + Mac backend uygulaması. Google Places üzerinden işletme adaylarını bulur, kamuya açık web iletişim bilgileriyle zenginleştirir, fırsat skoruna göre sıralar ve Google Sheets üzerinde CRM havuzu olarak yönetir.
 
 ## Aktif geliştirme
 - Branch: `codex/mvp-v1`
 - PR: #2
 - Yol haritası: GitHub issue #3 ve `PROJECT.md`
 
-## Şu anki MVP özellikleri
-- yalnızca il / ilçe / konum ile genel işletme arama
-- isteğe bağlı sektör ile aramayı daraltma
+## Özellikler
+- il / ilçe / konum bazlı işletme arama
+- isteğe bağlı sektör araması
+- **geniş ilçe taraması**: farklı sektör sorgularını ve mevcut Google Places sayfalarını birleştirir
 - minimum puan / minimum yorum filtresi
-- firma adı, kategori, telefon, website, adres, Maps URL, puan, yorum sayısı, Place ID, koordinat ve çalışma saatleri
-- deterministik `0-100` Lead Score + Türkçe skor nedenleri
-- website enrichment:
-  - kamuya açık e-posta
-  - WhatsApp bağlantısı
+- websitesiz / website var filtresi
+- cep telefonu / sabit hat ayrımı
+- firma, kategori, telefonlar, website, adres, Maps, puan, yorum, koordinat ve çalışma saatleri
+- deterministik `0-100` Lead Score + Türkçe nedenler
+- kamuya açık website enrichment:
+  - e-posta ve WhatsApp
   - Instagram / Facebook / LinkedIn / TikTok
+  - platform sayfasında açıkça bulunabiliyorsa takipçi sayıları
   - iletişim sayfası ve form sinyali
-  - SSL / mobil viewport sinyali
+  - SSL / mobil uyumluluk sinyali
   - WordPress / Wix / Shopify sinyalleri
-- müşteri havuzu / CRM
-- Place ID ile duplicate engelleme
-- CRM durumları
-- not + etiket
-- son iletişim tarihi
-- arama geçmişi ve tekrar arama
-- CSV ve XLSX export
-- GitHub Actions typecheck + production build
+- Google Sheets tabanlı müşteri havuzu / CRM
+- Place ID ile duplicate kontrolü
+- CRM durumları, not, etiket, son iletişim
+- CSV export
+- modern XLSX export: özet sayfası, filtreler, sabit başlık, linkler, durum açılır listesi ve koşullu biçimlendirme
+- arama geçmişi
+- Contrast Creative Studio markalı arayüz
 
-## Teknoloji
-- Chrome Extension Manifest V3
-- React + Vite + TypeScript
-- Node.js 22 + Express + TypeScript
-- Supabase / PostgreSQL
-- Google Places API (New)
-- ExcelJS
+## Google Places kapsam notu
+Google Places Text Search tek sorguda en fazla 60 sonuç döndürür. Geniş tarama modu farklı sektör ailelerini ayrı sorgular halinde tarayıp sonuçları `Place ID` ile birleştirir. Bu yöntem ilçe kapsamını ciddi biçimde büyütür; ancak Google Places API hiçbir yöntemle bir bölgedeki **her işletmenin eksiksiz listesini garanti etmez**.
 
-## 1. Gereksinimler
+## Gereksinimler
 - Node.js 22+
-- npm
-- Google Cloud hesabı
-- Supabase projesi
+- Google Cloud projesi
+- Places API (New)
+- Google Sheets API
+- servis hesabı JSON anahtarı
 - Google Chrome / Chromium
 
-## 2. Bağımlılıkları kur
-Repository kökünde:
-
-```bash
-npm install
-```
-
-## 3. Google Places API
-Google Cloud Console'da bir proje oluştur ve **Places API (New)** servisini etkinleştir.
-
-Bir API key oluştur. Bu key yalnızca backend ortam değişkeninde tutulur; extension içine yazılmaz.
-
-## 4. Supabase
-Supabase projesi oluştur ve SQL Editor içinde `supabase/schema.sql` dosyasını çalıştır.
-
-Mevcut eski bir veritabanın varsa aynı dosyadaki `alter table ... add column if not exists` satırları enrichment alanlarını ekler.
-
-## 5. Backend ortam değişkenleri
-
-```bash
-cp server/.env.example server/.env
-```
-
-`server/.env`:
+## Backend ortam değişkenleri
 
 ```env
 PORT=8787
 GOOGLE_PLACES_API_KEY=...
-SUPABASE_URL=...
-SUPABASE_SERVICE_ROLE_KEY=...
+GOOGLE_SHEET_ID=...
+GOOGLE_SERVICE_ACCOUNT_FILE=./google-service-account.json
 ALLOWED_EXTENSION_ORIGIN=
 ```
 
-Gerçek anahtarları commit etme.
+Gerçek API anahtarlarını ve servis hesabı JSON dosyasını commit etme.
 
-## 6. Backend'i başlat
+## Çalıştırma
 
 ```bash
+npm install
 npm run dev:server
 ```
 
@@ -91,42 +67,13 @@ Sağlık kontrolü:
 GET http://localhost:8787/health
 ```
 
-## 7. Extension build
+Extension build:
 
 ```bash
 npm --workspace extension run build
 ```
 
-Chrome'da:
-1. `chrome://extensions`
-2. **Developer mode** aç
-3. **Load unpacked** seç
-4. `extension/dist` klasörünü seç
-
-## 8. İlk test
-
-### Sektörlü arama
-- Sektör: `diş kliniği`
-- Konum: `Bursa, Nilüfer`
-
-### Sektörsüz arama
-- Sektör: boş
-- Konum: `Bursa, Orhangazi`
-
-> Not: Google Places Text Search'te yalnızca konum yazmak, o bölgedeki tüm işletmelerin eksiksiz dökümü anlamına gelmez. Google'ın genel işletme sonuçlarını döndürür. Daha geniş kapsama ihtiyaç olursa ayrı bir “geniş tarama provider'ı” eklenebilir.
-
-## 9. Website enrichment
-Arama sonucunda veya CRM havuzunda website'i olan işletmede **İletişimi Bul** aksiyonu kullanılabilir.
-
-Backend:
-- yalnızca `http/https` kabul eder
-- localhost/private IP bloklar
-- DNS çözümlemesini kontrol eder
-- yönlendirme sayısını sınırlar
-- timeout uygular
-- HTML response boyutunu sınırlar
-
-Enrichment başarısız olursa ana lead kaydı kaybolmaz.
+Chrome'da `chrome://extensions` → Developer mode → Load unpacked → `extension/dist`.
 
 ## API
 - `GET /health`
@@ -138,18 +85,12 @@ Enrichment başarısız olursa ana lead kaydı kaybolmaz.
 - `POST /api/leads/:id/enrich`
 - `GET /api/leads/export.csv`
 - `GET /api/leads/export.xlsx`
+- `POST /api/sheets/export`
 
 ## Güvenlik
 - Secret ve `.env` commit edilmez.
-- Google API key ve Supabase service role key yalnızca backend'de tutulur.
+- Google API key ve servis hesabı yalnızca backend'de tutulur.
+- Extension API anahtarlarını görmez.
 - Input validation Zod ile yapılır.
 - Rate limit ve Helmet aktiftir.
-- Extension Google API anahtarını görmez.
-- Website enrichment SSRF korumalıdır.
-
-## Proje takibi
-- `PROJECT.md`: mimari + detaylı checklist
-- Issue #3: görünür ilerleme yüzdesi ve yol haritası
-- `AGENTS.md`: Codex geliştirme kuralları
-
-MVP dışındaki Google Sheets, AI satış mesajı, periyodik tarama ve MCP/agent özellikleri sonraki fazdadır.
+- Website enrichment SSRF korumalıdır; localhost/private IP erişimi engellenir.
