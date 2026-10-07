@@ -6,6 +6,7 @@ SERVER_DIR="$ROOT_DIR/server"
 ENV_FILE="$SERVER_DIR/.env"
 PLIST="$HOME/Library/LaunchAgents/com.contrast.google-musteri-toplama.plist"
 LABEL="com.contrast.google-musteri-toplama"
+SERVICE_ACCOUNT="$SERVER_DIR/google-service-account.json"
 
 pause_and_exit() {
   echo ""
@@ -28,7 +29,7 @@ fi
 # Eski kurulumdaki gizli ayarları yeni sürüme otomatik taşı.
 if [[ -n "$OLD_WORKDIR" && "$OLD_WORKDIR" != "$SERVER_DIR" ]]; then
   if [[ -f "$OLD_WORKDIR/.env" ]]; then cp "$OLD_WORKDIR/.env" "$ENV_FILE"; fi
-  if [[ -f "$OLD_WORKDIR/google-service-account.json" ]]; then cp "$OLD_WORKDIR/google-service-account.json" "$SERVER_DIR/google-service-account.json"; fi
+  if [[ -f "$OLD_WORKDIR/google-service-account.json" ]]; then cp "$OLD_WORKDIR/google-service-account.json" "$SERVICE_ACCOUNT"; fi
 fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -85,11 +86,32 @@ fi
 
 set_env_value GOOGLE_SERVICE_ACCOUNT_FILE './google-service-account.json'
 
-if [[ ! -f "$SERVER_DIR/google-service-account.json" ]]; then
+# Önceki kurulumdan kopyalanamadıysa Downloads/Desktop içinde servis hesabı JSON'unu güvenli biçimde bul.
+if [[ ! -f "$SERVICE_ACCOUNT" ]]; then
+  echo "Google servis hesabı dosyası aranıyor..."
+  FOUND_SERVICE_ACCOUNT=""
+  while IFS= read -r -d '' candidate; do
+    if [[ "$candidate" == "$SERVICE_ACCOUNT" ]]; then
+      continue
+    fi
+    if grep -Eq '"type"[[:space:]]*:[[:space:]]*"service_account"' "$candidate" 2>/dev/null && grep -q '"client_email"' "$candidate" 2>/dev/null; then
+      FOUND_SERVICE_ACCOUNT="$candidate"
+      break
+    fi
+  done < <(find "$HOME/Downloads" "$HOME/Desktop" -maxdepth 5 -type f -name '*.json' -print0 2>/dev/null)
+
+  if [[ -n "$FOUND_SERVICE_ACCOUNT" ]]; then
+    cp "$FOUND_SERVICE_ACCOUNT" "$SERVICE_ACCOUNT"
+    chmod 600 "$SERVICE_ACCOUNT"
+    echo "✓ Google servis hesabı bulundu ve server klasörüne kopyalandı."
+  fi
+fi
+
+if [[ ! -f "$SERVICE_ACCOUNT" ]]; then
   echo ""
   echo "UYARI: google-service-account.json bulunamadı."
-  echo "Google Sheets/Havuz özellikleri için servis hesabı JSON dosyasını:"
-  echo "$SERVER_DIR/google-service-account.json"
+  echo "Google Sheets/Havuz özellikleri için Google Cloud servis hesabı JSON dosyasını:"
+  echo "$SERVICE_ACCOUNT"
   echo "konumuna koyup Kurulum-Mac.command dosyasını tekrar çalıştırın."
   pause_and_exit 1
 fi
@@ -140,7 +162,7 @@ open "http://localhost:8787/health"
 
 echo ""
 echo "✓ Google Müşteri Toplama güncellendi ve arka planda çalışıyor."
-echo "✓ API anahtarı ve Sheet ayarları bu Mac'te kalıcı olarak saklandı."
+echo "✓ API anahtarı, Sheet ayarları ve servis hesabı bu Mac'te kalıcı olarak saklandı."
 echo "✓ Mac açıldığında otomatik başlayacak."
 echo ""
 read -k 1 "?Kapatmak için bir tuşa basın..."
