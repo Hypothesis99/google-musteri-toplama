@@ -69,7 +69,6 @@ else
   echo "✓ Mevcut Google Places API anahtarı korundu."
 fi
 
-# Sheet ID gizli değildir ama boşsa ilk kurulumda kullanıcıdan alınır.
 CURRENT_SHEET_ID="$(get_env_value GOOGLE_SHEET_ID)"
 if [[ -z "$CURRENT_SHEET_ID" ]]; then
   echo ""
@@ -86,33 +85,13 @@ fi
 
 set_env_value GOOGLE_SERVICE_ACCOUNT_FILE './google-service-account.json'
 
-# Önceki kurulumdan kopyalanamadıysa Downloads/Desktop içinde servis hesabı JSON'unu güvenli biçimde bul.
-if [[ ! -f "$SERVICE_ACCOUNT" ]]; then
-  echo "Google servis hesabı dosyası aranıyor..."
-  FOUND_SERVICE_ACCOUNT=""
-  while IFS= read -r -d '' candidate; do
-    if [[ "$candidate" == "$SERVICE_ACCOUNT" ]]; then
-      continue
-    fi
-    if grep -Eq '"type"[[:space:]]*:[[:space:]]*"service_account"' "$candidate" 2>/dev/null && grep -q '"client_email"' "$candidate" 2>/dev/null; then
-      FOUND_SERVICE_ACCOUNT="$candidate"
-      break
-    fi
-  done < <(find "$HOME/Downloads" "$HOME/Desktop" -maxdepth 5 -type f -name '*.json' -print0 2>/dev/null)
-
-  if [[ -n "$FOUND_SERVICE_ACCOUNT" ]]; then
-    cp "$FOUND_SERVICE_ACCOUNT" "$SERVICE_ACCOUNT"
-    chmod 600 "$SERVICE_ACCOUNT"
-    echo "✓ Google servis hesabı bulundu ve server klasörüne kopyalandı."
-  fi
-fi
-
 if [[ ! -f "$SERVICE_ACCOUNT" ]]; then
   echo ""
   echo "UYARI: google-service-account.json bulunamadı."
-  echo "Google Sheets/Havuz özellikleri için Google Cloud servis hesabı JSON dosyasını:"
+  echo "Dosyayı yalnızca aşağıdaki server klasörüne koyun:"
   echo "$SERVICE_ACCOUNT"
-  echo "konumuna koyup Kurulum-Mac.command dosyasını tekrar çalıştırın."
+  open "$SERVER_DIR" >/dev/null 2>&1 || true
+  echo "Dosyayı koyduktan sonra Kurulum-Mac.command dosyasını tekrar çalıştırın."
   pause_and_exit 1
 fi
 
