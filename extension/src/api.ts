@@ -19,5 +19,6 @@ export const api = {
   leads: () => request<{ leads: SavedLead[] }>('/api/leads'),
   addLead: (lead: LeadCandidate) => request<{ lead: SavedLead; duplicate?: boolean }>('/api/leads', { method: 'POST', body: JSON.stringify(lead) }),
   updateLead: (id: string, patch: { status?: LeadStatus; notes?: string; tags?: string[]; lastContactedAt?: string | null }) => request<{ lead: SavedLead }>(`/api/leads/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  enrichSavedLead: (id: string) => request<{ lead: SavedLead }>(`/api/leads/${id}/enrich`, { method: 'POST' })
+  enrichSavedLead: (id: string) => request<{ lead: SavedLead }>(`/api/leads/${id}/enrich`, { method: 'POST' }),
+  exportToSheets: (leads: Array<LeadCandidate | SavedLead>) => request<{ ok: true; count: number; sheetUrl: string }>('/api/sheets/export', { method: 'POST', body: JSON.stringify({ leads }) })
 };
