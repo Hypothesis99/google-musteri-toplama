@@ -2,6 +2,7 @@ import { lookup } from 'node:dns/promises';
 import net from 'node:net';
 import type { LeadCandidate } from '../types.js';
 import { scoreLead } from './leadScore.js';
+import { extractTrPhones, splitPhones } from './phone.js';
 
 const MAX_BYTES = 1_000_000;
 const MAX_REDIRECTS = 3;
@@ -66,7 +67,10 @@ async function fetchWebsite(raw: string, redirects = 0): Promise<{ html: string;
     const response = await fetch(url, {
       redirect: 'manual',
       signal: controller.signal,
-      headers: { 'User-Agent': 'GoogleMusteriToplama/1.0 (+public-business-contact-enrichment)', Accept: 'text/html,application/xhtml+xml' }
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/154 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml'
+      }
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location');
@@ -111,6 +115,51 @@ function cleanEmail(value: string): string {
   return (value.replace(/^mailto:/i, '').split('?')[0] ?? '').trim().toLowerCase();
 }
 
+function numericPart(raw: string): number | undefined {
+  const cleaned = raw.trim().replace(/\s/g, '');
+  if (!cleaned) return undefined;
+  if (/^\d{1,3}([.,]\d{3})+$/.test(cleaned)) return Number(cleaned.replace(/[.,]/g, ''));
+  const normalized = cleaned.replace(',', '.').replace(/[^\d.]/g, '');
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function parseFollowers(html: string): number | undefined {
+  const text = html
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  const localizedPatterns: Array<{ regex: RegExp; multiplier: number }> = [
+    { regex: /([\d.,]+)\s*(?:B|bin)\s+takipçi/i, multiplier: 1_000 },
+    { regex: /([\d.,]+)\s*(?:Mn|M)\s+takipçi/i, multiplier: 1_000_000 },
+    { regex: /([\d.,]+)\s+takipçi/i, multiplier: 1 },
+    { regex: /([\d.,]+)\s*K\s+followers?/i, multiplier: 1_000 },
+    { regex: /([\d.,]+)\s*M\s+followers?/i, multiplier: 1_000_000 },
+    { regex: /([\d.,]+)\s*B\s+followers?/i, multiplier: 1_000_000_000 },
+    { regex: /([\d.,]+)\s+followers?/i, multiplier: 1 }
+  ];
+
+  for (const pattern of localizedPatterns) {
+    const match = text.match(pattern.regex);
+    if (!match?.[1]) continue;
+    const base = numericPart(match[1]);
+    if (base !== undefined) return Math.round(base * pattern.multiplier);
+  }
+  return undefined;
+}
+
+async function followerCount(url?: string): Promise<number | undefined> {
+  if (!url) return undefined;
+  try {
+    const { html } = await fetchWebsite(url);
+    return parseFollowers(html);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function enrichLead(lead: LeadCandidate): Promise<LeadCandidate> {
   if (!lead.website) return { ...lead, enrichmentStatus: 'failed' };
 
@@ -134,15 +183,26 @@ export async function enrichLead(lead: LeadCandidate): Promise<LeadCandidate> {
       lower.includes('cdn.shopify.com') || lower.includes('shopify.theme') ? 'Shopify' : undefined
     ]);
 
+    const websitePhones = extractTrPhones(`${html} ${whatsapp ?? ''}`);
+    const phones = splitPhones([lead.phone, ...websitePhones]);
+    const [instagramFollowers, facebookFollowers, linkedinFollowers, tiktokFollowers] = await Promise.all([
+      followerCount(instagram), followerCount(facebook), followerCount(linkedin), followerCount(tiktok)
+    ]);
+
     const enrichedBase: LeadCandidate = {
       ...lead,
+      ...phones,
       website: finalUrl.toString(),
-      email: emails[0],
+      email: emails[0] ?? lead.email,
       whatsapp,
       instagram,
+      instagramFollowers,
       facebook,
+      facebookFollowers,
       linkedin,
+      linkedinFollowers,
       tiktok,
+      tiktokFollowers,
       contactPage,
       hasContactForm: /<form\b/i.test(html) && /(contact|iletisim|iletişim|message|mesaj|email|e-mail)/i.test(html),
       ssl: finalUrl.protocol === 'https:',
