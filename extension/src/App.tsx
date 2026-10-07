@@ -141,6 +141,7 @@ export default function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [sheetExporting, setSheetExporting] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -204,6 +205,16 @@ export default function App() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Lead eklenemedi.'); }
   }
 
+  async function exportToSheets(leads: Array<LeadCandidate | SavedLead>) {
+    if (!leads.length) { setError('Google Sheets’e aktarılacak müşteri bulunamadı.'); return; }
+    setSheetExporting(true); setError(''); setNotice('');
+    try {
+      const data = await api.exportToSheets(leads);
+      setNotice(`${data.count} müşteri Google Sheets’e aktarıldı.`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Google Sheets aktarımı başarısız.'); }
+    finally { setSheetExporting(false); }
+  }
+
   function markEnriching(key: string, active: boolean) {
     setEnriching(previous => { const next = new Set(previous); active ? next.add(key) : next.delete(key); return next; });
   }
@@ -249,6 +260,8 @@ export default function App() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Notlar kaydedilemedi.'); }
   }
 
+  const searchExport = selectedCount > 0 ? results.filter(result => selected.has(result.placeId)) : results;
+
   return <div className="app-shell">
     <header><div><span className="eyebrow">LEAD WORKSPACE</span><h1>Google Müşteri Toplama</h1></div><span className="live-dot">MVP</span></header>
     <nav>
@@ -273,14 +286,14 @@ export default function App() {
       {loading && <div className="skeleton-list">{[1, 2, 3].map(i => <div className="skeleton" key={i} />)}</div>}
       {!loading && results.length === 0 && <div className="empty"><strong>Aramaya hazır.</strong><span>Örnek: yalnızca “Bursa, Orhangazi” veya “reklam ajansı” + “Bursa”</span></div>}
       {!loading && results.length > 0 && <section className="results">
-        <div className="section-head"><div><h2>{results.length} aday bulundu</h2><p>En yüksek fırsat skorları üstte.</p></div><button className="text-button" onClick={() => setSelected(new Set(results.map(result => result.placeId)))}>Tümünü seç</button></div>
+        <div className="section-head"><div><h2>{results.length} aday bulundu</h2><p>En yüksek fırsat skorları üstte.</p></div><div className="export-group"><button className="export-button" disabled={sheetExporting} onClick={() => void exportToSheets(searchExport)}>{sheetExporting ? 'Aktarılıyor…' : selectedCount ? `Sheets (${selectedCount})` : 'Sheets’e Aktar'}</button><button className="text-button" onClick={() => setSelected(new Set(results.map(result => result.placeId)))}>Tümünü seç</button></div></div>
         {[...results].sort((a, b) => b.leadScore - a.leadScore).map(lead => <LeadCard key={lead.placeId} lead={lead} selected={selected.has(lead.placeId)} onSelect={() => setSelected(previous => { const next = new Set(previous); next.has(lead.placeId) ? next.delete(lead.placeId) : next.add(lead.placeId); return next; })} onAdd={() => addLead(lead)} onEnrich={lead.website ? () => enrichCandidate(lead) : undefined} enriching={enriching.has(lead.placeId)} />)}
       </section>}
-      {selectedCount > 0 && <div className="bulk-bar"><strong>{selectedCount} müşteri seçildi</strong><button onClick={() => void Promise.all(results.filter(result => selected.has(result.placeId)).map(addLead))}>Havuza Ekle</button></div>}
+      {selectedCount > 0 && <div className="bulk-bar"><strong>{selectedCount} müşteri seçildi</strong><div className="bulk-actions"><button disabled={sheetExporting} onClick={() => void exportToSheets(searchExport)}>Sheets</button><button onClick={() => void Promise.all(results.filter(result => selected.has(result.placeId)).map(addLead))}>Havuza Ekle</button></div></div>}
     </main>}
 
     {tab === 'pool' && <main>
-      <section className="section-head"><div><h2>Müşteri Havuzu</h2><p>En güçlü adaylar önce gösterilir.</p></div><div className="export-group"><a className="export-button" href={`${API_URL}/api/leads/export.csv`} target="_blank" rel="noreferrer">CSV</a><a className="export-button" href={`${API_URL}/api/leads/export.xlsx`} target="_blank" rel="noreferrer">Excel</a></div></section>
+      <section className="section-head"><div><h2>Müşteri Havuzu</h2><p>En güçlü adaylar önce gösterilir.</p></div><div className="export-group"><button className="export-button" disabled={sheetExporting || !sortedPool.length} onClick={() => void exportToSheets(sortedPool)}>Sheets</button><a className="export-button" href={`${API_URL}/api/leads/export.csv`} target="_blank" rel="noreferrer">CSV</a><a className="export-button" href={`${API_URL}/api/leads/export.xlsx`} target="_blank" rel="noreferrer">Excel</a></div></section>
       <div className="pool-filters">
         <input className="pool-search" value={poolQuery} onChange={event => setPoolQuery(event.target.value)} placeholder="Firma, kategori, e-posta veya etiket ara…" />
         <select aria-label="CRM durumu" value={statusFilter} onChange={event => setStatusFilter(event.target.value as 'Tümü' | LeadStatus)}><option>Tümü</option>{STATUSES.map(status => <option key={status}>{status}</option>)}</select>
@@ -295,6 +308,6 @@ export default function App() {
       {history.length ? <div className="history-list">{history.map(item => <article className="history-card" key={item.id}><div><strong>{item.query || 'Tüm işletmeler'}</strong><span>{item.location} · {item.resultCount} sonuç</span><small>{new Date(item.createdAt).toLocaleString('tr-TR')}{item.minRating !== undefined ? ` · min. ${item.minRating} puan` : ''}{item.minReviews !== undefined ? ` · min. ${item.minReviews} yorum` : ''}</small></div><button className="secondary" onClick={() => void repeatSearch(item)}>Tekrar ara</button></article>)}</div> : <div className="empty"><strong>Henüz arama geçmişi yok.</strong><span>Yaptığın aramalar burada görünecek.</span></div>}
     </main>}
 
-    {tab === 'settings' && <main><div className="settings-card"><h2>Ayarlar</h2><p>Backend adresi: <code>{API_URL}</code></p><p className="muted">Google ve Supabase API anahtarları eklentide tutulmaz.</p><p className="muted">Website taraması yalnızca kamuya açık işletme sayfalarındaki iletişim sinyallerini işler.</p></div></main>}
+    {tab === 'settings' && <main><div className="settings-card"><h2>Ayarlar</h2><p>Backend adresi: <code>{API_URL}</code></p><p className="muted">Google ve Supabase API anahtarları eklentide tutulmaz.</p><p className="muted">Google Sheets aktarımı servis hesabı üzerinden backend tarafından yapılır.</p><p className="muted">Website taraması yalnızca kamuya açık işletme sayfalarındaki iletişim sinyallerini işler.</p></div></main>}
   </div>;
 }
