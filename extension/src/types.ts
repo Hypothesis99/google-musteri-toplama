@@ -34,6 +34,7 @@ export interface SearchPayload {
   location: string;
   minRating?: number;
   minReviews?: number;
+  scanMode?: 'normal' | 'broad';
 }
 
 export interface SearchHistoryItem extends SearchPayload {
