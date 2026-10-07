@@ -5,6 +5,7 @@ export interface LeadSearchInput {
   location: string;
   minRating?: number;
   minReviews?: number;
+  scanMode?: 'normal' | 'broad';
 }
 
 export interface LeadSourceProvider {
