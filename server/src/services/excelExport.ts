@@ -106,11 +106,11 @@ export async function buildLeadsWorkbook(leads: GoogleSheetLead[]): Promise<Buff
   if (sheet.rowCount >= 2) {
     sheet.addConditionalFormatting({
       ref: `J2:J${sheet.rowCount}`,
-      rules: [{ type: 'expression', formulae: ['$J2="Yok"'], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFFE5E5' }, fgColor: { argb: 'FFFFE5E5' } }, font: { color: { argb: 'FF9C2F2F' }, bold: true } } }]
+      rules: [{ type: 'expression', priority: 1, formulae: ['$J2="Yok"'], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFFE5E5' }, fgColor: { argb: 'FFFFE5E5' } }, font: { color: { argb: 'FF9C2F2F' }, bold: true } } }]
     });
     sheet.addConditionalFormatting({
       ref: `X2:X${sheet.rowCount}`,
-      rules: [{ type: 'expression', formulae: ['$X2="Müşteri Oldu"'], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFE1F2E5' }, fgColor: { argb: 'FFE1F2E5' } }, font: { color: { argb: 'FF24613A' }, bold: true } } }]
+      rules: [{ type: 'expression', priority: 2, formulae: ['$X2="Müşteri Oldu"'], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFE1F2E5' }, fgColor: { argb: 'FFE1F2E5' } }, font: { color: { argb: 'FF24613A' }, bold: true } } }]
     });
   }
 
