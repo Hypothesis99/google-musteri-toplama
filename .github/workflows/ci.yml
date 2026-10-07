@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: ["codex/mvp-v1", "main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chrome-extension
+          path: extension/dist
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-local
+          path: |
+            server
+            package.json
+            package-lock.json
+            README.md
+            Kurulum-Mac.command
+          include-hidden-files: true
+          if-no-files-found: error

@@ -1,0 +1,270 @@
+import { lookup } from 'node:dns/promises';
+import net from 'node:net';
+import type { LeadCandidate } from '../types.js';
+import { scoreLead } from './leadScore.js';
+import { extractTrPhones, splitPhones } from './phone.js';
+
+const MAX_BYTES = 1_000_000;
+const MAX_REDIRECTS = 3;
+const TIMEOUT_MS = 8_000;
+const MAX_EXTRA_PAGES = 4;
+
+function isPrivateIp(ip: string): boolean {
+  if (net.isIP(ip) === 4) {
+    const parts = ip.split('.');
+    const a = Number(parts[0] ?? -1);
+    const b = Number(parts[1] ?? -1);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  if (net.isIP(ip) === 6) {
+    const value = ip.toLowerCase();
+    return value === '::' || value === '::1' || value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe80:');
+  }
+  return true;
+}
+
+async function assertPublicUrl(raw: string): Promise<URL> {
+  const url = new URL(raw);
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Yalnızca http/https adresleri desteklenir.');
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.local')) throw new Error('Yerel ağ adreslerine erişim engellendi.');
+  const records = await lookup(host, { all: true });
+  if (!records.length || records.some(record => isPrivateIp(record.address))) throw new Error('Private veya yerel ağ adreslerine erişim engellendi.');
+  return url;
+}
+
+async function readHtml(response: Response): Promise<string> {
+  const type = response.headers.get('content-type') ?? '';
+  if (!type.includes('text/html') && !type.includes('application/xhtml+xml')) throw new Error('Website HTML döndürmedi.');
+  const declared = Number(response.headers.get('content-length') ?? 0);
+  if (declared > MAX_BYTES) throw new Error('Website yanıtı çok büyük.');
+  if (!response.body) return '';
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let html = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_BYTES) throw new Error('Website yanıtı boyut limitini aştı.');
+      html += decoder.decode(value, { stream: true });
+    }
+    html += decoder.decode();
+    return html;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function fetchWebsite(raw: string, redirects = 0): Promise<{ html: string; finalUrl: URL }> {
+  if (redirects > MAX_REDIRECTS) throw new Error('Çok fazla yönlendirme.');
+  const url = await assertPublicUrl(raw);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/154 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml'
+      }
+    });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location');
+      if (!location) throw new Error('Geçersiz yönlendirme.');
+      return fetchWebsite(new URL(location, url).toString(), redirects + 1);
+    }
+    if (!response.ok) throw new Error(`Website yanıt vermedi (${response.status}).`);
+    return { html: await readHtml(response), finalUrl: url };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function unique(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function normalizeEmbeddedHtml(html: string): string {
+  return html
+    .replace(/\\u002[fF]/g, '/')
+    .replace(/\\\//g, '/')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#x27;|&#39;/gi, "'");
+}
+
+function extractLinks(html: string, base: URL): string[] {
+  const links: string[] = [];
+  const normalized = normalizeEmbeddedHtml(html);
+  const hrefRegex = /href\s*=\s*["']([^"']+)["']/gi;
+  for (const match of normalized.matchAll(hrefRegex)) {
+    const href = match[1];
+    if (!href) continue;
+    try {
+      const url = new URL(href, base);
+      if (['http:', 'https:'].includes(url.protocol)) links.push(url.toString());
+    } catch { /* invalid href */ }
+  }
+
+  // JSON-LD sameAs, inline scripts and dynamically rendered site builders often keep
+  // social profile URLs outside ordinary <a href> elements. Read public URLs there too.
+  const urlRegex = /https?:\/\/[^\s"'<>\\)\]]+/gi;
+  for (const match of normalized.matchAll(urlRegex)) {
+    let raw = match[0] ?? '';
+    raw = raw.replace(/[.,;:!?]+$/g, '');
+    try {
+      const url = new URL(raw);
+      if (['http:', 'https:'].includes(url.protocol)) links.push(url.toString());
+    } catch { /* invalid URL */ }
+  }
+  return unique(links);
+}
+
+function isLikelyProfileUrl(link: string): boolean {
+  try {
+    const url = new URL(link);
+    const path = url.pathname.toLowerCase();
+    return !/(^|\/)(share|sharer|sharing|intent|dialog|plugins|login|oauth|hashtag|explore)(\/|$)/i.test(path);
+  } catch { return false; }
+}
+
+function firstByHost(links: string[], hosts: string[]): string | undefined {
+  return links.find(link => {
+    try {
+      const host = new URL(link).hostname.toLowerCase();
+      return isLikelyProfileUrl(link) && hosts.some(candidate => host === candidate || host.endsWith(`.${candidate}`));
+    } catch { return false; }
+  });
+}
+
+function sameSiteLinks(links: string[], base: URL): string[] {
+  return unique(links.filter(link => {
+    try {
+      const url = new URL(link);
+      const sameHost = url.hostname === base.hostname || url.hostname.endsWith(`.${base.hostname}`) || base.hostname.endsWith(`.${url.hostname}`);
+      if (!sameHost) return false;
+      return /(iletisim|iletişim|contact|contact-us|bize-ulasin|bize-ulaşın|hakkimizda|hakkımızda|about|kurumsal|corporate|company)/i.test(url.pathname);
+    } catch { return false; }
+  })).slice(0, MAX_EXTRA_PAGES);
+}
+
+function cleanEmail(value: string): string {
+  return (value.replace(/^mailto:/i, '').split('?')[0] ?? '').trim().toLowerCase();
+}
+
+function numericPart(raw: string): number | undefined {
+  const cleaned = raw.trim().replace(/\s/g, '');
+  if (!cleaned) return undefined;
+  if (/^\d{1,3}([.,]\d{3})+$/.test(cleaned)) return Number(cleaned.replace(/[.,]/g, ''));
+  const normalized = cleaned.replace(',', '.').replace(/[^\d.]/g, '');
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function parseFollowers(html: string): number | undefined {
+  const text = html
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  const localizedPatterns: Array<{ regex: RegExp; multiplier: number }> = [
+    { regex: /([\d.,]+)\s*(?:B|bin)\s+takipçi/i, multiplier: 1_000 },
+    { regex: /([\d.,]+)\s*(?:Mn|M)\s+takipçi/i, multiplier: 1_000_000 },
+    { regex: /([\d.,]+)\s+takipçi/i, multiplier: 1 },
+    { regex: /([\d.,]+)\s*K\s+followers?/i, multiplier: 1_000 },
+    { regex: /([\d.,]+)\s*M\s+followers?/i, multiplier: 1_000_000 },
+    { regex: /([\d.,]+)\s*B\s+followers?/i, multiplier: 1_000_000_000 },
+    { regex: /([\d.,]+)\s+followers?/i, multiplier: 1 }
+  ];
+
+  for (const pattern of localizedPatterns) {
+    const match = text.match(pattern.regex);
+    if (!match?.[1]) continue;
+    const base = numericPart(match[1]);
+    if (base !== undefined) return Math.round(base * pattern.multiplier);
+  }
+  return undefined;
+}
+
+async function followerCount(url?: string): Promise<number | undefined> {
+  if (!url) return undefined;
+  try {
+    const { html } = await fetchWebsite(url);
+    return parseFollowers(html);
+  } catch {
+    return undefined;
+  }
+}
+
+export async function enrichLead(lead: LeadCandidate): Promise<LeadCandidate> {
+  if (!lead.website) return { ...lead, enrichmentStatus: 'failed' };
+
+  try {
+    const home = await fetchWebsite(lead.website);
+    const homeLinks = extractLinks(home.html, home.finalUrl);
+    const extraTargets = sameSiteLinks(homeLinks, home.finalUrl);
+    const extraResults = await Promise.allSettled(extraTargets.map(target => fetchWebsite(target)));
+    const pages = [
+      home,
+      ...extraResults
+        .filter((result): result is PromiseFulfilledResult<{ html: string; finalUrl: URL }> => result.status === 'fulfilled')
+        .map(result => result.value)
+    ];
+
+    const combinedHtml = pages.map(page => normalizeEmbeddedHtml(page.html)).join('\n');
+    const links = unique(pages.flatMap(page => extractLinks(page.html, page.finalUrl)));
+    const mailto = [...combinedHtml.matchAll(/mailto:([^"'\s<>?]+)/gi)].map(match => cleanEmail(match[1] ?? '')).filter(Boolean);
+    const plain = [...combinedHtml.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(match => cleanEmail(match[0])).filter(Boolean);
+    const emails = unique([...mailto, ...plain]).filter(email => !email.endsWith('.png') && !email.endsWith('.jpg'));
+
+    const whatsapp = firstByHost(links, ['wa.me', 'api.whatsapp.com', 'web.whatsapp.com']);
+    const instagram = firstByHost(links, ['instagram.com']);
+    const facebook = firstByHost(links, ['facebook.com', 'fb.com']);
+    const linkedin = firstByHost(links, ['linkedin.com']);
+    const tiktok = firstByHost(links, ['tiktok.com']);
+    const contactPage = links.find(link => /\/(iletisim|iletişim|contact|contact-us|bize-ulasin|bize-ulaşın)(\/|$|\?|#)/i.test(link));
+    const lower = combinedHtml.toLowerCase();
+    const technology = unique([
+      lower.includes('wp-content') || lower.includes('wp-includes') ? 'WordPress' : undefined,
+      lower.includes('wixstatic.com') || lower.includes('wix.com') ? 'Wix' : undefined,
+      lower.includes('cdn.shopify.com') || lower.includes('shopify.theme') ? 'Shopify' : undefined
+    ]);
+
+    const websitePhones = extractTrPhones(`${combinedHtml} ${whatsapp ?? ''}`);
+    const phones = splitPhones([lead.phone, ...websitePhones]);
+    const [instagramFollowers, facebookFollowers, linkedinFollowers, tiktokFollowers] = await Promise.all([
+      followerCount(instagram), followerCount(facebook), followerCount(linkedin), followerCount(tiktok)
+    ]);
+
+    const enrichedBase: LeadCandidate = {
+      ...lead,
+      ...phones,
+      website: home.finalUrl.toString(),
+      email: emails[0] ?? lead.email,
+      whatsapp: whatsapp ?? lead.whatsapp,
+      instagram: instagram ?? lead.instagram,
+      instagramFollowers: instagramFollowers ?? lead.instagramFollowers,
+      facebook: facebook ?? lead.facebook,
+      facebookFollowers: facebookFollowers ?? lead.facebookFollowers,
+      linkedin: linkedin ?? lead.linkedin,
+      linkedinFollowers: linkedinFollowers ?? lead.linkedinFollowers,
+      tiktok: tiktok ?? lead.tiktok,
+      tiktokFollowers: tiktokFollowers ?? lead.tiktokFollowers,
+      contactPage: contactPage ?? lead.contactPage,
+      hasContactForm: /<form\b/i.test(combinedHtml) && /(contact|iletisim|iletişim|message|mesaj|email|e-mail)/i.test(combinedHtml),
+      ssl: home.finalUrl.protocol === 'https:',
+      mobileFriendly: /<meta[^>]+name=["']viewport["']/i.test(home.html),
+      technology,
+      enrichmentStatus: 'done'
+    };
+    return { ...enrichedBase, ...scoreLead(enrichedBase) };
+  } catch {
+    return { ...lead, enrichmentStatus: 'failed' };
+  }
+}

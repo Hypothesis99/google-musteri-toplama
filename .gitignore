@@ -4,6 +4,7 @@ build/
 .env
 .env.*
 !.env.example
+server/google-service-account*.json
 .DS_Store
 coverage/
 *.log

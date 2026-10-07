@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Google Müşteri Toplama",
+  "version": "0.1.0",
+  "description": "Google Places üzerinden potansiyel müşteri bulma ve CRM havuzu oluşturma aracı.",
+  "action": {
+    "default_title": "Google Müşteri Toplama",
+    "default_popup": "index.html"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["http://localhost:8787/*"]
+}
