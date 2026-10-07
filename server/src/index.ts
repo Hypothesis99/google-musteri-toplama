@@ -7,6 +7,7 @@ import { config } from './config.js';
 import placesRouter from './routes/places.js';
 import leadsRouter from './routes/leads.js';
 import enrichmentRouter from './routes/enrichment.js';
+import sheetsRouter from './routes/sheets.js';
 
 const app = express();
 app.use(helmet());
@@ -18,12 +19,13 @@ app.get('/health', (_req,res)=>res.json({ok:true,service:'google-musteri-toplama
 app.use('/api/places', placesRouter);
 app.use('/api/leads', leadsRouter);
 app.use('/api/enrichment', enrichmentRouter);
+app.use('/api/sheets', sheetsRouter);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(error);
   if (error instanceof ZodError) return res.status(400).json({ error: 'Gönderilen bilgiler geçersiz.', details: error.issues.map(i=>i.message) });
   const message = error instanceof Error ? error.message : 'Beklenmeyen bir hata oluştu.';
-  const safe = message.includes('yapılandırılmamış') ? message : 'İşlem tamamlanamadı. Lütfen tekrar dene.';
+  const safe = message.includes('yapılandırılmamış') || message.includes('Google') ? message : 'İşlem tamamlanamadı. Lütfen tekrar dene.';
   res.status(message.includes('yapılandırılmamış') ? 503 : 500).json({ error: safe });
 });
 
