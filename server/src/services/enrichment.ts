@@ -7,6 +7,7 @@ import { extractTrPhones, splitPhones } from './phone.js';
 const MAX_BYTES = 1_000_000;
 const MAX_REDIRECTS = 3;
 const TIMEOUT_MS = 8_000;
+const MAX_EXTRA_PAGES = 4;
 
 function isPrivateIp(ip: string): boolean {
   if (net.isIP(ip) === 4) {
@@ -88,10 +89,20 @@ function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }
 
+function normalizeEmbeddedHtml(html: string): string {
+  return html
+    .replace(/\\u002[fF]/g, '/')
+    .replace(/\\\//g, '/')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#x27;|&#39;/gi, "'");
+}
+
 function extractLinks(html: string, base: URL): string[] {
   const links: string[] = [];
-  const regex = /href\s*=\s*["']([^"']+)["']/gi;
-  for (const match of html.matchAll(regex)) {
+  const normalized = normalizeEmbeddedHtml(html);
+  const hrefRegex = /href\s*=\s*["']([^"']+)["']/gi;
+  for (const match of normalized.matchAll(hrefRegex)) {
     const href = match[1];
     if (!href) continue;
     try {
@@ -99,16 +110,47 @@ function extractLinks(html: string, base: URL): string[] {
       if (['http:', 'https:'].includes(url.protocol)) links.push(url.toString());
     } catch { /* invalid href */ }
   }
+
+  // JSON-LD sameAs, inline scripts and dynamically rendered site builders often keep
+  // social profile URLs outside ordinary <a href> elements. Read public URLs there too.
+  const urlRegex = /https?:\/\/[^\s"'<>\\)\]]+/gi;
+  for (const match of normalized.matchAll(urlRegex)) {
+    let raw = match[0] ?? '';
+    raw = raw.replace(/[.,;:!?]+$/g, '');
+    try {
+      const url = new URL(raw);
+      if (['http:', 'https:'].includes(url.protocol)) links.push(url.toString());
+    } catch { /* invalid URL */ }
+  }
   return unique(links);
+}
+
+function isLikelyProfileUrl(link: string): boolean {
+  try {
+    const url = new URL(link);
+    const path = url.pathname.toLowerCase();
+    return !/(^|\/)(share|sharer|sharing|intent|dialog|plugins|login|oauth|hashtag|explore)(\/|$)/i.test(path);
+  } catch { return false; }
 }
 
 function firstByHost(links: string[], hosts: string[]): string | undefined {
   return links.find(link => {
     try {
       const host = new URL(link).hostname.toLowerCase();
-      return hosts.some(candidate => host === candidate || host.endsWith(`.${candidate}`));
+      return isLikelyProfileUrl(link) && hosts.some(candidate => host === candidate || host.endsWith(`.${candidate}`));
     } catch { return false; }
   });
+}
+
+function sameSiteLinks(links: string[], base: URL): string[] {
+  return unique(links.filter(link => {
+    try {
+      const url = new URL(link);
+      const sameHost = url.hostname === base.hostname || url.hostname.endsWith(`.${base.hostname}`) || base.hostname.endsWith(`.${url.hostname}`);
+      if (!sameHost) return false;
+      return /(iletisim|iletişim|contact|contact-us|bize-ulasin|bize-ulaşın|hakkimizda|hakkımızda|about|kurumsal|corporate|company)/i.test(url.pathname);
+    } catch { return false; }
+  })).slice(0, MAX_EXTRA_PAGES);
 }
 
 function cleanEmail(value: string): string {
@@ -164,10 +206,21 @@ export async function enrichLead(lead: LeadCandidate): Promise<LeadCandidate> {
   if (!lead.website) return { ...lead, enrichmentStatus: 'failed' };
 
   try {
-    const { html, finalUrl } = await fetchWebsite(lead.website);
-    const links = extractLinks(html, finalUrl);
-    const mailto = [...html.matchAll(/mailto:([^"'\s<>?]+)/gi)].map(match => cleanEmail(match[1] ?? '')).filter(Boolean);
-    const plain = [...html.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(match => cleanEmail(match[0])).filter(Boolean);
+    const home = await fetchWebsite(lead.website);
+    const homeLinks = extractLinks(home.html, home.finalUrl);
+    const extraTargets = sameSiteLinks(homeLinks, home.finalUrl);
+    const extraResults = await Promise.allSettled(extraTargets.map(target => fetchWebsite(target)));
+    const pages = [
+      home,
+      ...extraResults
+        .filter((result): result is PromiseFulfilledResult<{ html: string; finalUrl: URL }> => result.status === 'fulfilled')
+        .map(result => result.value)
+    ];
+
+    const combinedHtml = pages.map(page => normalizeEmbeddedHtml(page.html)).join('\n');
+    const links = unique(pages.flatMap(page => extractLinks(page.html, page.finalUrl)));
+    const mailto = [...combinedHtml.matchAll(/mailto:([^"'\s<>?]+)/gi)].map(match => cleanEmail(match[1] ?? '')).filter(Boolean);
+    const plain = [...combinedHtml.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(match => cleanEmail(match[0])).filter(Boolean);
     const emails = unique([...mailto, ...plain]).filter(email => !email.endsWith('.png') && !email.endsWith('.jpg'));
 
     const whatsapp = firstByHost(links, ['wa.me', 'api.whatsapp.com', 'web.whatsapp.com']);
@@ -176,14 +229,14 @@ export async function enrichLead(lead: LeadCandidate): Promise<LeadCandidate> {
     const linkedin = firstByHost(links, ['linkedin.com']);
     const tiktok = firstByHost(links, ['tiktok.com']);
     const contactPage = links.find(link => /\/(iletisim|iletişim|contact|contact-us|bize-ulasin|bize-ulaşın)(\/|$|\?|#)/i.test(link));
-    const lower = html.toLowerCase();
+    const lower = combinedHtml.toLowerCase();
     const technology = unique([
       lower.includes('wp-content') || lower.includes('wp-includes') ? 'WordPress' : undefined,
       lower.includes('wixstatic.com') || lower.includes('wix.com') ? 'Wix' : undefined,
       lower.includes('cdn.shopify.com') || lower.includes('shopify.theme') ? 'Shopify' : undefined
     ]);
 
-    const websitePhones = extractTrPhones(`${html} ${whatsapp ?? ''}`);
+    const websitePhones = extractTrPhones(`${combinedHtml} ${whatsapp ?? ''}`);
     const phones = splitPhones([lead.phone, ...websitePhones]);
     const [instagramFollowers, facebookFollowers, linkedinFollowers, tiktokFollowers] = await Promise.all([
       followerCount(instagram), followerCount(facebook), followerCount(linkedin), followerCount(tiktok)
@@ -192,21 +245,21 @@ export async function enrichLead(lead: LeadCandidate): Promise<LeadCandidate> {
     const enrichedBase: LeadCandidate = {
       ...lead,
       ...phones,
-      website: finalUrl.toString(),
+      website: home.finalUrl.toString(),
       email: emails[0] ?? lead.email,
-      whatsapp,
-      instagram,
-      instagramFollowers,
-      facebook,
-      facebookFollowers,
-      linkedin,
-      linkedinFollowers,
-      tiktok,
-      tiktokFollowers,
-      contactPage,
-      hasContactForm: /<form\b/i.test(html) && /(contact|iletisim|iletişim|message|mesaj|email|e-mail)/i.test(html),
-      ssl: finalUrl.protocol === 'https:',
-      mobileFriendly: /<meta[^>]+name=["']viewport["']/i.test(html),
+      whatsapp: whatsapp ?? lead.whatsapp,
+      instagram: instagram ?? lead.instagram,
+      instagramFollowers: instagramFollowers ?? lead.instagramFollowers,
+      facebook: facebook ?? lead.facebook,
+      facebookFollowers: facebookFollowers ?? lead.facebookFollowers,
+      linkedin: linkedin ?? lead.linkedin,
+      linkedinFollowers: linkedinFollowers ?? lead.linkedinFollowers,
+      tiktok: tiktok ?? lead.tiktok,
+      tiktokFollowers: tiktokFollowers ?? lead.tiktokFollowers,
+      contactPage: contactPage ?? lead.contactPage,
+      hasContactForm: /<form\b/i.test(combinedHtml) && /(contact|iletisim|iletişim|message|mesaj|email|e-mail)/i.test(combinedHtml),
+      ssl: home.finalUrl.protocol === 'https:',
+      mobileFriendly: /<meta[^>]+name=["']viewport["']/i.test(home.html),
       technology,
       enrichmentStatus: 'done'
     };
