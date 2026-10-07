@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 92" role="img" aria-label="Contrast Creative Studio">
+  <rect width="320" height="92" fill="white"/>
+  <g transform="translate(6 10)">
+    <rect x="0" y="0" width="9" height="48" rx="2" fill="#F15A24"/>
+    <rect x="13" y="0" width="9" height="48" rx="2" fill="#22A699"/>
+    <rect x="0" y="53" width="22" height="9" rx="2" fill="#F4B942"/>
+    <text x="34" y="40" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="800" fill="#151A24">Contrast</text>
+    <text x="36" y="64" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" letter-spacing="2.4" fill="#70798A">CREATIVE STUDIO</text>
+  </g>
+</svg>
